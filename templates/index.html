@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Faraway人工智能小助手</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 10px;
+            font-size: 16px;
+        }
+        h1 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+        }
+        #chat-container {
+            height: calc(100vh - 180px);
+            border: 1px solid #ccc;
+            overflow-y: auto;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+        .input-container {
+            position: relative;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 5px;
+            margin-bottom: 10px;
+        }
+        #user-input {
+            width: 100%;
+            border: none;
+            outline: none;
+            resize: none;
+            min-height: 20px;
+            max-height: 100px;
+            overflow-y: auto;
+            font-size: 1em;
+            padding: 5px 70px 5px 5px;
+            box-sizing: border-box;
+        }
+        .button-container {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            display: flex;
+            gap: 5px;
+        }
+        button {
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        @media (max-width: 480px) {
+            body {
+                padding: 5px;
+            }
+            #chat-container {
+                height: calc(100vh - 150px);
+            }
+            .input-container {
+                padding: 3px;
+            }
+            #user-input {
+                font-size: 16px;
+                padding: 3px 60px 3px 3px;
+            }
+            button {
+                padding: 3px 8px;
+                font-size: 0.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Faraway人工智能小助手</h1>
+    <div id="chat-container"></div>
+    <div class="input-container">
+        <textarea id="user-input" placeholder="输入您的问题..." rows="1"></textarea>
+        <div class="button-container">
+            <button onclick="sendMessage()">发送</button>
+            <button onclick="clearChat()">清除</button>
+        </div>
+    </div>
+
+    <script>
+        let chatHistory = [
+            {"role": "system", "content": "你是豆包，是由字节跳动开发的 AI 人工智能助手"}
+        ];
+
+        function sendMessage() {
+            const userInput = document.getElementById('user-input');
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            userInput.value = '';
+            adjustTextareaHeight();
+
+            displayMessage('用户', message);
+            chatHistory.push({"role": "user", "content": message});
+
+            fetch('/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message: message, history: chatHistory }),
+            })
+            .then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let assistantMessage = {"role": "assistant", "content": ""};
+
+                function readStream() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            console.log("Stream ended");
+                            chatHistory.push(assistantMessage);
+                            return;
+                        }
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        lines.forEach(line => {
+                            if (line.startsWith('data: ')) {
+                                const content = line.slice(6).trim();
+                                if (content !== '[DONE]') {
+                                    if (content.startsWith('REFERENCES:')) {
+                                        console.log("References:", content.slice(11));
+                                    } else {
+                                        assistantMessage.content += content;
+                                        displayMessage('Faraway', content, true);
+                                    }
+                                }
+                            }
+                        });
+
+                        readStream();
+                    }).catch(error => {
+                        console.error('Error reading stream:', error);
+                    });
+                }
+
+                readStream();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                displayMessage('系统', '处理您的请求时发生错误。');
+            });
+        }
+
+        function displayMessage(sender, message, append = false) {
+            const chatContainer = document.getElementById('chat-container');
+            if (!append) {
+                const messageElement = document.createElement('p');
+                messageElement.innerHTML = `<strong>${sender}:</strong> ${message}`;
+                chatContainer.appendChild(messageElement);
+            } else {
+                const lastMessage = chatContainer.lastElementChild;
+                if (lastMessage && lastMessage.querySelector('strong').textContent === sender + ':') {
+                    lastMessage.innerHTML += message;
+                } else {
+                    const messageElement = document.createElement('p');
+                    messageElement.innerHTML = `<strong>${sender}:</strong> ${message}`;
+                    chatContainer.appendChild(messageElement);
+                }
+            }
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function clearChat() {
+            fetch('/clear_chat', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                document.getElementById('chat-container').innerHTML = '';
+                chatHistory = [
+                    {"role": "system", "content": "你是豆包，是由字节跳动开发的 AI 人工智能助手"}
+                ];
+                displayMessage('系统', '对话历史已清除，请开始新的对话。');
+            })
+            .catch(error => {
+                console.error('清除对话时发生错误:', error);
+                displayMessage('系统', '清除对话失败，请稍后再试。');
+            });
+        }
+
+        function adjustTextareaHeight() {
+            const textarea = document.getElementById('user-input');
+            textarea.style.height = 'auto';
+            textarea.style.height = (textarea.scrollHeight) + 'px';
+
+            const inputContainer = document.querySelector('.input-container');
+            inputContainer.style.height = 'auto';
+            inputContainer.style.height = (inputContainer.scrollHeight) + 'px';
+        }
+
+        document.addEventListener('DOMContentLoaded', (event) => {
+            displayMessage('系统', '欢迎使用Faraway人工智能小助手！请输入您的问题。');
+            const userInput = document.getElementById('user-input');
+            userInput.addEventListener('input', adjustTextareaHeight);
+        });
+
+        document.getElementById('user-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
